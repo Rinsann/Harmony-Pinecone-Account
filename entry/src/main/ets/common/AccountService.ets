@@ -1,7 +1,6 @@
-import { dbUtil } from './DBUtil';
-import { AccountRecord, DateGroup, AccountStats, ProcessedData, CalcResult, RankItem, ChartData, ReportData, CategoryStat, ChartStat } from './Models';
+import { dbUtil, AccountRecord, DateGroup, AccountStats } from './DBUtil';
+import { ProcessedData, CalcResult, RankItem, ChartData, ReportData, CategoryStat, ChartStat } from './Models';
 
-// 导出所有需要的类型，供 ReportPage 等使用
 export { AccountRecord, DateGroup, AccountStats, ProcessedData, CalcResult, RankItem, ChartData, ReportData, CategoryStat, ChartStat };
 
 export class AccountService {
@@ -12,8 +11,21 @@ export class AccountService {
     result.groups.forEach(group => {
       allRecords.push(...group.records);
     });
+
+    console.info(`[DEBUG] DB total records: ${allRecords.length}`);
+
     if (startTime !== undefined && endTime !== undefined) {
-      allRecords = allRecords.filter(rec => rec.date >= startTime && rec.date <= endTime);
+      console.info(`[DEBUG] Filtering time: ${new Date(startTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
+
+      const originalCount = allRecords.length;
+      allRecords = allRecords.filter(rec => {
+        const keep = rec.date >= startTime && rec.date <= endTime;
+        if (!keep) {
+          // console.info(`[DEBUG] Dropped record date: ${new Date(rec.date).toLocaleString()}`);
+        }
+        return keep;
+      });
+      console.info(`[DEBUG] Filter result: ${originalCount} -> ${allRecords.length}`);
     }
     return allRecords;
   }
@@ -76,48 +88,48 @@ export class AccountService {
   }
 
   static async getReportData(startDate: Date, endDate: Date, reportType: number): Promise<ReportData> {
-    return new Promise(async (resolve) => {
-      const rawList = await AccountService.getRawList(startDate.getTime(), endDate.getTime() + 86400000);
-      rawList.sort((a, b) => b.date - a.date);
+    // 注意：为了确保包含当天的最后一秒，endTime 应该加一天或者设为 23:59:59
+    // 这里我们在传入前已经处理好了，或者在这里处理
+    const rawList = await AccountService.getRawList(startDate.getTime(), endDate.getTime() + 86400000);
+    rawList.sort((a, b) => b.date - a.date);
 
-      let tExp = 0;
-      let tInc = 0;
-      const expMap = new Map<string, number>();
-      const incMap = new Map<string, number>();
+    let tExp = 0;
+    let tInc = 0;
+    const expMap = new Map<string, number>();
+    const incMap = new Map<string, number>();
 
-      const bucketSize = reportType === 0 ? 32 : 13;
-      const expBuckets = new Array<number>(bucketSize).fill(0);
-      const incBuckets = new Array<number>(bucketSize).fill(0);
+    const bucketSize = reportType === 0 ? 32 : 13;
+    const expBuckets = new Array<number>(bucketSize).fill(0);
+    const incBuckets = new Array<number>(bucketSize).fill(0);
 
-      rawList.forEach(rec => {
-        const amt = Number(rec.amount) || 0;
-        const type = Number(rec.type);
-        const date = new Date(rec.date);
-        let idx = reportType === 0 ? date.getDate() : (date.getMonth() + 1);
-        if (idx >= bucketSize) idx = 0;
+    rawList.forEach(rec => {
+      const amt = Number(rec.amount) || 0;
+      const type = Number(rec.type);
+      const date = new Date(rec.date);
+      let idx = reportType === 0 ? date.getDate() : (date.getMonth() + 1);
+      if (idx >= bucketSize) idx = 0;
 
-        if (type === 0) {
-          tExp += amt;
-          expMap.set(rec.category, (expMap.get(rec.category) || 0) + amt);
-          expBuckets[idx] += amt;
-        } else {
-          tInc += amt;
-          const oldVal = incMap.get(rec.category) || 0;
-          incMap.set(rec.category, oldVal + amt);
-          // 核心修复点：收入金额必须加到收入桶 (incBuckets)
-          incBuckets[idx] += amt;
-        }
-      });
-
-      const stats: CalcResult = {
-        tExp, tInc, expMap, incMap, expBuckets, incBuckets, bucketSize
-      };
-
-      const expRank = AccountService.generateRank(expMap, tExp);
-      const incRank = AccountService.generateRank(incMap, tInc);
-
-      resolve({ rawList, stats, expRank, incRank });
+      if (type === 0) { // 支出
+        tExp += amt;
+        expMap.set(rec.category, (expMap.get(rec.category) || 0) + amt);
+        expBuckets[idx] += amt;
+      } else { // 收入
+        tInc += amt;
+        incMap.set(rec.category, (incMap.get(rec.category) || 0) + amt);
+        incBuckets[idx] += amt; // 修复点：收入加到收入桶
+      }
     });
+
+    console.info(`[DEBUG] Report Stats: Exp=${tExp}, Inc=${tInc}`);
+
+    const stats: CalcResult = {
+      tExp, tInc, expMap, incMap, expBuckets, incBuckets, bucketSize
+    };
+
+    const expRank = AccountService.generateRank(expMap, tExp);
+    const incRank = AccountService.generateRank(incMap, tInc);
+
+    return { rawList, stats, expRank, incRank };
   }
 
   private static generateRank(map: Map<string, number>, total: number): RankItem[] {

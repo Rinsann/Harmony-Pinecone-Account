@@ -1,6 +1,5 @@
 import { Constants } from '../common/Constants';
 import { DateUtil } from '../utils/DateUtil';
-// 核心修复：现在 ReportPage 所有的类型都从 AccountService 统一导入
 import { AccountService, AccountRecord, ChartStat, CategoryStat, RankItem, ReportData } from '../common/AccountService';
 
 @Component
@@ -98,12 +97,14 @@ export struct ReportPage {
     this.rawList = data.rawList;
     const stats = data.stats;
 
-    // 1. 更新总额
+    // 强制更新状态
     this.totalExpense = stats.tExp;
     this.totalIncome = stats.tInc;
     this.uiRefreshFlag++;
 
-    // 2. 更新图表
+    // 打印日志验证 UI 变量是否更新
+    console.info(`[ReportPage] UI Update: Exp=${this.totalExpense}, Inc=${this.totalIncome}`);
+
     const chartRes = AccountService.getChartData(stats);
     const tempChart: ChartStat[] = [];
     const count = this.reportType === 0 ? new Date(this.startDate.getFullYear(), this.startDate.getMonth()+1, 0).getDate() : 12;
@@ -165,9 +166,7 @@ export struct ReportPage {
           Text(this.reportType === 0 ? `${this.startDate.getFullYear()}年${this.startDate.getMonth()+1}月` : `${this.startDate.getFullYear()}年`).fontSize(24).fontWeight(FontWeight.Bold).fontColor(Constants.C_TEXT_MAIN)
           Text('▼').fontSize(12).fontColor(Constants.C_TEXT_GRAY).margin({ left: 6 })
         }.onClick(() => this.showDatePicker())
-
         Blank()
-
         Row() {
           this.TypeBtn('月', 0); this.TypeBtn('年', 1)
         }.backgroundColor('#E8F5E9').borderRadius(16).padding(2)
@@ -175,16 +174,47 @@ export struct ReportPage {
 
       Scroll() {
         Column() {
-          // 总览
+          // 1. 总览卡片 (内联写法 - 确保直接读取 State)
           Column() {
             Row() {
-              this.SwitchBtn('总支出', this.totalExpense, this.showExpense, true)
+              // 支出开关
+              Row() {
+                Circle({ width: 16, height: 16 })
+                  .fill(this.showExpense ? Constants.C_ACCENT_RED : 'transparent')
+                  .stroke(this.showExpense ? 'transparent' : Constants.C_TEXT_GRAY).strokeWidth(1)
+                Column() {
+                  Text('总支出').fontSize(12).fontColor(Constants.C_TEXT_GRAY)
+                  // 核心：直接读取 this.totalExpense，不通过 Builder 传参
+                  Text(`¥${this.totalExpense.toFixed(2)}`)
+                    .fontSize(16).fontWeight(FontWeight.Bold)
+                    .fontColor(this.showExpense ? Constants.C_ACCENT_RED : Constants.C_TEXT_GRAY)
+                }.alignItems(HorizontalAlign.Start).margin({ left: 8 })
+              }.onClick(() => {
+                this.showExpense = !this.showExpense;
+                this.filterDisplayData();
+              })
+
               Blank().width(20)
-              this.SwitchBtn('总收入', this.totalIncome, this.showIncome, false)
+
+              // 收入开关
+              Row() {
+                Circle({ width: 16, height: 16 })
+                  .fill(this.showIncome ? Constants.C_MAIN : 'transparent')
+                  .stroke(this.showIncome ? 'transparent' : Constants.C_TEXT_GRAY).strokeWidth(1)
+                Column() {
+                  Text('总收入').fontSize(12).fontColor(Constants.C_TEXT_GRAY)
+                  Text(`¥${this.totalIncome.toFixed(2)}`)
+                    .fontSize(16).fontWeight(FontWeight.Bold)
+                    .fontColor(this.showIncome ? Constants.C_MAIN : Constants.C_TEXT_GRAY)
+                }.alignItems(HorizontalAlign.Start).margin({ left: 8 })
+              }.onClick(() => {
+                this.showIncome = !this.showIncome;
+                this.filterDisplayData();
+              })
             }.width('100%').justifyContent(FlexAlign.Start)
           }.width('90%').padding(20).margin({ bottom: 15 }).backgroundColor(Constants.C_WHITE).borderRadius(16).shadow({ radius: 10, color: '#05000000', offsetY: 5 })
 
-          // 图表
+          // 2. 图表
           if (this.showExpense || this.showIncome) {
             Column() {
               Text(this.reportType === 0 ? '每日趋势' : '每月趋势').fontSize(16).fontWeight(FontWeight.Bold).width('100%').margin({ bottom: 20 })
@@ -207,11 +237,63 @@ export struct ReportPage {
             }.width('90%').padding(15).margin({ bottom: 15 }).backgroundColor(Constants.C_WHITE).borderRadius(16)
           }
 
-          // 排行榜 (内联)
-          if (this.showExpense) this.RankCardView('支出排行榜', this.expenseRank, true)
-          if (this.showIncome) this.RankCardView('收入排行榜', this.incomeRank, false)
+          // 3. 支出排行榜 (内联写法)
+          if (this.showExpense) {
+            Column() {
+              Text('支出排行榜').fontSize(16).fontWeight(FontWeight.Bold).width('100%').margin({ bottom: 15 })
+              if (this.expenseRank.length === 0) {
+                Text('暂无数据').fontColor(Constants.C_TEXT_GRAY).fontSize(14).margin({ top: 10, bottom: 10 })
+              } else {
+                List() {
+                  ForEach(this.expenseRank, (item: RankItem) => {
+                    ListItem() {
+                      Column() {
+                        Row() {
+                          Row() {
+                            Circle({ width: 8, height: 8 }).fill(Constants.C_ACCENT_RED).margin({ right: 8 })
+                            Text(item.name).fontSize(14).fontWeight(FontWeight.Medium)
+                            Text(` ${item.percent.toFixed(1)}%`).fontSize(12).fontColor(Constants.C_TEXT_GRAY).margin({ left: 5 })
+                          }
+                          Text(`¥ ${item.amount.toFixed(2)}`).fontSize(14).fontWeight(FontWeight.Bold)
+                        }.width('100%').justifyContent(FlexAlign.SpaceBetween).margin({ bottom: 8 })
+                        Progress({ value: item.percent, total: 100, type: ProgressType.Linear }).color(Constants.C_ACCENT_RED).backgroundColor('#F0F0F0').style({ strokeWidth: 6 })
+                      }.padding({ top: 8, bottom: 8 })
+                    }
+                  })
+                }.width('100%').height('auto')
+              }
+            }.width('90%').padding(15).margin({ bottom: 15 }).backgroundColor(Constants.C_WHITE).borderRadius(16)
+          }
 
-          // 明细列表
+          // 4. 收入排行榜 (内联写法)
+          if (this.showIncome) {
+            Column() {
+              Text('收入排行榜').fontSize(16).fontWeight(FontWeight.Bold).width('100%').margin({ bottom: 15 })
+              if (this.incomeRank.length === 0) {
+                Text('暂无数据').fontColor(Constants.C_TEXT_GRAY).fontSize(14).margin({ top: 10, bottom: 10 })
+              } else {
+                List() {
+                  ForEach(this.incomeRank, (item: RankItem) => {
+                    ListItem() {
+                      Column() {
+                        Row() {
+                          Row() {
+                            Circle({ width: 8, height: 8 }).fill(Constants.C_MAIN).margin({ right: 8 })
+                            Text(item.name).fontSize(14).fontWeight(FontWeight.Medium)
+                            Text(` ${item.percent.toFixed(1)}%`).fontSize(12).fontColor(Constants.C_TEXT_GRAY).margin({ left: 5 })
+                          }
+                          Text(`¥ ${item.amount.toFixed(2)}`).fontSize(14).fontWeight(FontWeight.Bold)
+                        }.width('100%').justifyContent(FlexAlign.SpaceBetween).margin({ bottom: 8 })
+                        Progress({ value: item.percent, total: 100, type: ProgressType.Linear }).color(Constants.C_MAIN).backgroundColor('#F0F0F0').style({ strokeWidth: 6 })
+                      }.padding({ top: 8, bottom: 8 })
+                    }
+                  })
+                }.width('100%').height('auto')
+              }
+            }.width('90%').padding(15).margin({ bottom: 15 }).backgroundColor(Constants.C_WHITE).borderRadius(16)
+          }
+
+          // 5. 明细列表
           Column() {
             Row() {
               Text('收支明细').fontSize(16).fontWeight(FontWeight.Bold)
@@ -249,41 +331,5 @@ export struct ReportPage {
 
   @Builder TypeBtn(text: string, type: number) {
     Text(text).fontSize(14).fontColor(this.reportType === type ? Constants.C_WHITE : Constants.C_MAIN).backgroundColor(this.reportType === type ? Constants.C_MAIN : 'transparent').padding({ top: 4, bottom: 4, left: 16, right: 16 }).borderRadius(14).onClick(() => this.toggleType(type))
-  }
-
-  @Builder SwitchBtn(title: string, amount: number, isOn: boolean, isExpense: boolean) {
-    Row() {
-      Circle({ width: 16, height: 16 }).fill(isOn ? (isExpense ? Constants.C_ACCENT_RED : Constants.C_MAIN) : 'transparent').stroke(isExpense ? Constants.C_ACCENT_RED : Constants.C_MAIN).strokeWidth(1)
-      Column() {
-        Text(title).fontSize(12).fontColor(Constants.C_TEXT_GRAY)
-        Text(`¥${amount.toFixed(2)}` + (this.uiRefreshFlag >= 0 ? '' : '')).fontSize(16).fontWeight(FontWeight.Bold).fontColor(isOn ? (isExpense ? Constants.C_ACCENT_RED : Constants.C_MAIN) : Constants.C_TEXT_GRAY)
-      }.alignItems(HorizontalAlign.Start).margin({ left: 8 })
-    }.onClick(() => { if (isExpense) this.showExpense = !this.showExpense; else this.showIncome = !this.showIncome; this.filterDisplayData(); })
-  }
-
-  @Builder RankCardView(title: string, list: RankItem[], isExpense: boolean) {
-    Column() {
-      Text(title).fontSize(16).fontWeight(FontWeight.Bold).width('100%').margin({ bottom: 15 })
-      if (list.length === 0) { Text('暂无数据').fontColor(Constants.C_TEXT_GRAY).fontSize(14).margin({ top: 10, bottom: 10 }) }
-      else {
-        List() {
-          ForEach(list, (item: RankItem) => {
-            ListItem() {
-              Column() {
-                Row() {
-                  Row() {
-                    Circle({ width: 8, height: 8 }).fill(isExpense ? Constants.C_ACCENT_RED : Constants.C_MAIN).margin({ right: 8 })
-                    Text(item.name).fontSize(14).fontWeight(FontWeight.Medium)
-                    Text(` ${item.percent.toFixed(1)}%`).fontSize(12).fontColor(Constants.C_TEXT_GRAY).margin({ left: 5 })
-                  }
-                  Text(`¥ ${item.amount.toFixed(2)}`).fontSize(14).fontWeight(FontWeight.Bold)
-                }.width('100%').justifyContent(FlexAlign.SpaceBetween).margin({ bottom: 8 })
-                Progress({ value: item.percent, total: 100, type: ProgressType.Linear }).color(isExpense ? Constants.C_ACCENT_RED : Constants.C_MAIN).backgroundColor('#F0F0F0').style({ strokeWidth: 6 })
-              }.padding({ top: 8, bottom: 8 })
-            }
-          })
-        }.width('100%').height('auto')
-      }
-    }.width('90%').padding(15).margin({ bottom: 15 }).backgroundColor(Constants.C_WHITE).borderRadius(16)
   }
 }

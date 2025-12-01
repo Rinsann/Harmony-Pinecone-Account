@@ -1,11 +1,40 @@
 import { relationalStore, ValuesBucket } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { AccountRecord, AccountStats, DateGroup, AccountData } from './Models';
 
-// 核心修复：重新导出 Models 接口，解决所有 "not exported" 错误
-export { AccountRecord, AccountStats, DateGroup, AccountData };
+// --- 基础数据结构 ---
+export interface AccountRecord {
+  id: number;
+  amount: number;
+  type: number; // 0:支出, 1:收入
+  category: string;
+  remark: string;
+  date: number; // 毫秒级时间戳
+}
 
-class DBUtil {
+export interface AccountStats {
+  income: number;
+  expense: number;
+  balance: number;
+}
+
+export interface DateGroup {
+  groupKey: string;
+  year: number;
+  month: number;
+  day: number;
+  weekday: number;
+  totalIn: number;
+  totalOut: number;
+  records: AccountRecord[];
+}
+
+export interface AccountData {
+  groups: DateGroup[];
+  stats: AccountStats;
+}
+// -----------------------------------------------------------------
+
+export class DBUtil {
   private rdbStore: relationalStore.RdbStore | null = null;
   private tableName = 'ACCOUNT_TABLE';
 
@@ -14,13 +43,38 @@ class DBUtil {
       name: 'PineconeStore.db',
       securityLevel: relationalStore.SecurityLevel.S1
     };
-    const sql = `CREATE TABLE IF NOT EXISTS ${this.tableName} ( id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL, type INTEGER, category TEXT, remark TEXT, date INTEGER )`;
+
     try {
       this.rdbStore = await relationalStore.getRdbStore(context, config);
+
+      // --- 暴力重置：每次启动都删表重建，确保 Mock 数据一定进去 ---
+      // ⚠️ 上线前请注释掉下面这一行！！
+      await this.rdbStore.executeSql(`DROP TABLE IF EXISTS ${this.tableName}`);
+
+      const sql = `CREATE TABLE IF NOT EXISTS ${this.tableName} ( id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL, type INTEGER, category TEXT, remark TEXT, date INTEGER )`;
       await this.rdbStore.executeSql(sql);
+
+      // --- 强制注入 Mock 数据 ---
+      console.info('DB: 开始强制注入 Mock 数据...');
+      await this.generateMockData();
+      console.info('DB: Mock 数据注入完成！');
+
     } catch (err) {
       console.error('DB_INIT_ERR', JSON.stringify(err));
     }
+  }
+
+  async generateMockData() {
+    const now = new Date().getTime();
+
+    // 本月数据 (11月)
+    await this.insert({ id: 0, amount: 6666, type: 1, category: '工资', remark: '测试工资', date: now });
+    await this.insert({ id: 0, amount: 33, type: 0, category: '餐饮', remark: '测试午饭', date: now });
+    await this.insert({ id: 0, amount: 99, type: 0, category: '餐饮', remark: '晚饭', date: now + 86400000 }); // 明天
+    await this.insert({ id: 0, amount: 500, type: 0, category: '交通', remark: '加油', date: now - 86400000 }); // 昨天
+
+    // 上个月数据 (10月) - 用于测试月份切换
+    await this.insert({ id: 0, amount: 99, type: 0, category: '交通', remark: '打车', date: now - 86400000 * 30 });
   }
 
   async queryAllList(): Promise<AccountRecord[]> {
@@ -107,7 +161,7 @@ class DBUtil {
         let group = map.get(uniqueKey);
         if (group) {
           group.records.push(rec);
-          if (rec.type === 1) group.totalIn += amount;
+          if (type === 1) group.totalIn += amount;
           else group.totalOut += amount;
         }
       }
